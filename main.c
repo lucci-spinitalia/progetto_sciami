@@ -24,6 +24,8 @@
 #define max(x,y) ((x) > (y) ? (x) : (y))
 
 /* Prototype */
+void velocity_packet_send(__u8 direction_left, __u8 direction_right, __u16 vel_left, __u16 vel_right, __u8 motor_on);
+int calculate_crc(char *message, int length);
 int load_device_tree_file(char *name);
 int gpio_export(int pin_number);
 int gpio_set_value(int pin_number, int value);
@@ -31,7 +33,7 @@ int gpio_set_direction(int pin_number, int value);
 int gpio_generic_set_value(char *path, int value);
 
 // Gps socket to communicate with CCU
-int gps_device = -1;
+int saetta_device = -1;
   
 /* Generic */
 
@@ -40,7 +42,7 @@ void signal_handler(int signum)
   // Garbage collection
   printf("Terminating program...\n");
   
-  close(gps_device);
+  close(saetta_device);
   exit(signum);
 }
 
@@ -74,9 +76,9 @@ int main(int argc, char **argv)
   // enable uart2
   load_device_tree_file("enable-uart2");
   
-  gps_device = com_open("/dev/ttyO2", 115200, 'N', 8, 1);
+  saetta_device = com_open("/dev/ttyO2", 115200, 'N', 8, 1);
   
-  if(gps_device < 0)
+  if(saetta_device < 0)
     perror("com_open");
 	
   //select_timeout.tv_sec = TIMEOUT_SEC;
@@ -94,10 +96,16 @@ int main(int argc, char **argv)
     FD_ZERO(&wr);
     FD_ZERO(&er);
     
-    if(gps_device > 0)
+    if(saetta_device > 0)
     {
-      FD_SET(gps_device, &rd);
-      nfds = max(nfds, gps_device);
+      FD_SET(saetta_device, &rd);
+      nfds = max(nfds, saetta_device);
+
+      if(rs232_buffer_tx_empty == 0)
+      {
+    	FD_SET(saetta_device, &wr);
+    	nfds = max(nfds, saetta_device);
+      }
     }
     
     select_result = select(nfds + 1, &rd, &wr, NULL, NULL);
@@ -116,11 +124,11 @@ int main(int argc, char **argv)
     }
 
     /* Manage gps */
-    if(gps_device > 0)
+    if(saetta_device > 0)
     {
-      if(FD_ISSET(gps_device, &rd))
+      if(FD_ISSET(saetta_device, &rd))
       {
-        bytes_read = rs232_read(gps_device);
+        bytes_read = rs232_read(saetta_device);
 
         if((bytes_read > 0) || ((bytes_read < 0) && rs232_buffer_rx_full))
         {
@@ -130,17 +138,30 @@ int main(int argc, char **argv)
           {
             gps_device_buffer[bytes_read] = '\0';
 
-            for(i = 0; i < bytes_read; i++)
-              printf("%x \n", gps_device_buffer[i]);
-
             if(strncmp(gps_device_buffer, "STARTr", strlen("STARTr") - 1) == 0)
-              printf("catch: %s", gps_device_buffer);
+            {
+              printf("catch\n");
+              velocity_packet_send(1, 0, 1024, 1024, 1);
+            }
+            else
+            {
+              for(i = 0; i < bytes_read; i++)
+                printf("%x ", gps_device_buffer[i]);
+
+              printf("\n");
+            }
           }
         }
       }
+
+      if(FD_ISSET(saetta_device, &wr))
+      {
+        if(rs232_write(saetta_device) < 0)
+          printf("Error on rs232_write");
+      }
     }
 
-	/* Timeout region */
+    /* Timeout region */
     /*if((select_timeout.tv_sec == 0) && (select_timeout.tv_usec == 0))
     {
       select_timeout.tv_sec = TIMEOUT_SEC;
@@ -230,4 +251,53 @@ int load_device_tree_file(char *name)
 
   fclose(file);
   return 1;
+}
+
+/*
+ * Questa funzione si occupa di mandare un messaggio per il comando della velocità del robot
+ * saetta. La struttura del pacchetto da inviare è la seguente
+ *
+ * | 0x7F | direzione sinistra | direzione destra | velocità sinistra lsb | velocità sinistra msb | velocità destra lsb | velocità destra msb | abilitazione motori | crc | 0x0A |
+ *
+ * I parametri accettati in ingresso sono le direzioni dei motori, le velocità ed il flag di abilitazione
+ */
+void velocity_packet_send(__u8 direction_left, __u8 direction_right, __u16 vel_left, __u16 vel_right, __u8 motor_on)
+{
+  char packet_to_send[11];
+  long crc = 0;
+
+  packet_to_send[0] = 0x7F;
+  packet_to_send[1] = direction_left;
+  packet_to_send[2] = direction_right;
+  packet_to_send[3] = vel_left & 0xff;
+  packet_to_send[4] = vel_left >> 8;
+  packet_to_send[5] = vel_right & 0xff;
+  packet_to_send[6] = vel_right >> 8;
+
+  if(motor_on > 0)
+	packet_to_send[7] = 1;
+  else
+	packet_to_send[7] = 0;
+
+  crc = calculate_crc(packet_to_send, sizeof(packet_to_send));
+
+  packet_to_send[8] = crc & 0xff;
+  packet_to_send[9] = crc >> 8;
+  packet_to_send[10] = 0x0a;
+
+  rs232_load_tx((unsigned char *)packet_to_send, sizeof(packet_to_send));
+}
+
+int calculate_crc(char *message, int length)
+{
+  int k = 0;
+  long crc = 0;
+  const int length_crc = 2;
+
+  for(k = 0; k < length - (length_crc + 1); k++)
+    crc += message[k];
+
+  crc = ~crc + 1;
+
+  return crc;
 }
