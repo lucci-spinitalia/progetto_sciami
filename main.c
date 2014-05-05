@@ -1,9 +1,9 @@
-#include <sys/types.h> 
-#include <sys/ioctl.h> 
-#include <sys/stat.h> 
-#include <fcntl.h> 
-#include <stdio.h> 
-#include <stdlib.h> 
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include <sys/time.h> 
@@ -23,10 +23,12 @@
 #undef max 
 #define max(x,y) ((x) > (y) ? (x) : (y))
 
-#undef min
-#define min(x,y) ((x) < (y) ? (x) : (y))
-
 /* Prototype */
+int load_device_tree_file(char *name);
+int gpio_export(int pin_number);
+int gpio_set_value(int pin_number, int value);
+int gpio_set_direction(int pin_number, int value);
+int gpio_generic_set_value(char *path, int value);
 
 // Gps socket to communicate with CCU
 int gps_device = -1;
@@ -48,18 +50,13 @@ int main(int argc, char **argv)
 
   // Gps rs232 device
   char gps_device_buffer[RS232_BUFFER_SIZE];
-  char *nmea_token;
-  char nmea_message[256];
-  
-    // timer
-  long rover_time_start_hs = 0;
-  long rover_time_stop_hs = 0;
-  long rover_elapsed_time_hs = 0;
-  
+
   /* Generic Variable */
   int done = 0; // for the while in main loop
   int bytes_read; // to check how many bytes has been read
   int bytes_sent;
+
+  int i;
 
   int select_result = -1; // value returned frome select()
   int nfds = 0; // fd to pass to select()
@@ -74,13 +71,10 @@ int main(int argc, char **argv)
   signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
 
-  // Select UART2_TX and set it as output
-  gpio_generic_set_value("/sys/kernel/debug/omap_mux/spi0_d0", 11);
+  // enable uart2
+  load_device_tree_file("enable-uart2");
   
-  // Select UART1_RX and set it as input pulled up
-  gpio_generic_set_value("/sys/kernel/debug/omap_mux/spi0_sclk", 39);
-  
-  gps_device = com_open("/dev/ttyO2", 4800, 'N', 8, 1);
+  gps_device = com_open("/dev/ttyO2", 115200, 'N', 8, 1);
   
   if(gps_device < 0)
     perror("com_open");
@@ -106,7 +100,7 @@ int main(int argc, char **argv)
       nfds = max(nfds, gps_device);
     }
     
-    select_result = select(nfds + 1, &rd, &wr, NULL, &select_timeout);
+    select_result = select(nfds + 1, &rd, &wr, NULL, NULL);
 
     if(select_result == -1 && errno == EAGAIN)
     {
@@ -127,20 +121,20 @@ int main(int argc, char **argv)
       if(FD_ISSET(gps_device, &rd))
       {
         bytes_read = rs232_read(gps_device);
+
         if((bytes_read > 0) || ((bytes_read < 0) && rs232_buffer_rx_full))
         {
-          bytes_read = rs232_unload_rx_filtered(gps_device_buffer, '\n');
+          bytes_read = rs232_unload_rx_filtered(gps_device_buffer, 0x0A);
 
           if(bytes_read > 0)
           {
             gps_device_buffer[bytes_read] = '\0';
 
-            nmea_token = strtok(gps_device_buffer, "\n");
+            for(i = 0; i < bytes_read; i++)
+              printf("%x \n", gps_device_buffer[i]);
 
-            while(nmea_token != NULL)
-            {
-              sprintf(nmea_message, "%s\n", nmea_token);
-            }
+            if(strncmp(gps_device_buffer, "STARTr", strlen("STARTr") - 1) == 0)
+              printf("catch: %s", gps_device_buffer);
           }
         }
       }
@@ -157,4 +151,83 @@ int main(int argc, char **argv)
   }  // end while(!= done)
 
   return 0;
+}
+
+int gpio_export(int pin_number)
+{
+  FILE *file = NULL;
+
+  file = fopen("/sys/class/gpio/export", "a");
+
+  if(file == NULL)
+    return -1;
+
+  fprintf(file, "%i", pin_number);
+
+  fclose(file);
+  return 1;
+}
+
+int gpio_set_value(int pin_number, int value)
+{
+  FILE *file = NULL;
+  char file_path[64];
+
+  sprintf(file_path, "/sys/class/gpio/gpio%i/value", pin_number);
+  file = fopen(file_path, "a");
+
+  if(file == NULL)
+    return -1;
+
+  fprintf(file, "%i", value);
+
+  fclose(file);
+  return 1;
+}
+
+int gpio_set_direction(int pin_number, int value)
+{
+  FILE *file = NULL;
+  char file_path[64];
+
+  sprintf(file_path, "/sys/class/gpio/gpio%i/direction", pin_number);
+  file = fopen(file_path, "a");
+
+  if(file == NULL)
+    return -1;
+
+  fprintf(file, "%i", value);
+
+  fclose(file);
+  return 1;
+}
+
+int gpio_generic_set_value(char *path, int value)
+{
+  FILE *file = NULL;
+
+  file = fopen(path, "a");
+
+  if(file == NULL)
+    return -1;
+
+  fprintf(file, "%i", value);
+
+  fclose(file);
+  return 1;
+}
+
+int load_device_tree_file(char *name)
+{
+  FILE *file = NULL;
+
+  file = fopen("/sys/devices/bone_capemgr.8/slots", "w");
+
+  if(file == NULL)
+    return -1;
+
+  fprintf(file, "%s", name);
+
+  fclose(file);
+  return 1;
 }

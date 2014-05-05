@@ -79,4 +79,21 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.managedBuildNature</nature>
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 	</natures>
+	<linkedResources>
+		<link>
+			<name>Rs232</name>
+			<type>2</type>
+			<location>/home/luca/beaglebone_code/Common/Source/Rs232</location>
+		</link>
+		<link>
+			<name>Source</name>
+			<type>2</type>
+			<location>/home/luca/beaglebone_code/Common/Source</location>
+		</link>
+		<link>
+			<name>rs232.h</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/beaglebone_code/Common/Include/rs232.h</locationURI>
+		</link>
+	</linkedResources>
 </projectDescription>
